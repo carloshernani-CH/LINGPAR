@@ -3,7 +3,7 @@ import sys
 
 class Token:
     def __init__(self, kind: str, value=None):
-        self.kind = kind   # 'INT', 'PLUS', 'MINUS', 'EOF'
+        self.kind = kind   # 'INT', 'PLUS', 'MINUS', 'EOF', 'MULT', 'DIV'
         self.value = value # int | str | ''
 
 class Lexer:
@@ -48,6 +48,27 @@ class Lexer:
             self._advance()
             self.next = Token('MINUS', '-')
             return self.next
+        
+        if c == '*':
+            self._advance()
+            self.next = Token('MULT', '*')
+            return self.next
+        
+        if c == '/':
+            self._advance()
+            self.next = Token('DIV', '/')
+            return self.next
+        
+        if c == '(':
+            self._advance()
+            self.next = Token('OPEN_PAR', '(')
+            return self.next
+        
+        if c == ')':
+            self._advance()
+            self.next = Token('CLOSE_PAR', ')')
+            return self.next
+
 
         # Símbolo inválido
         raise SyntaxError(f"[Lexer] Invalid symbol {c!r}")
@@ -57,29 +78,47 @@ class Parser:
     lex: Lexer = None
 
     @staticmethod
-    def parse_expression() -> int:
-        # Primeiro token deve ser INT
-        if Parser.lex.next.kind != 'INT':
-            raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}, expected INT")
-        result = Parser.lex.next.value
-        Parser.lex.select_next()
+    def parse_term():
+        result = Parser.parse_factor()
+        while Parser.lex.next.kind in ('MULT', 'DIV'):
+            op = Parser.lex.next.kind
+            Parser.lex.select_next()
+            rhs = Parser.parse_factor()
+            if op == 'DIV' and rhs == 0:
+                raise ZeroDivisionError("[Parser] Division by zero")
+            result = result * rhs if op == 'MULT' else result // rhs
+        return result
 
+    @staticmethod
+    def parse_factor():
+        if Parser.lex.next.kind in ('PLUS', 'MINUS'):
+            op = Parser.lex.next.kind
+            Parser.lex.select_next()
+            value = Parser.parse_factor()
+            return value if op == 'PLUS' else -value
+        if Parser.lex.next.kind == 'OPEN_PAR':
+            Parser.lex.select_next()
+            value = Parser.parse_expression()
+            if Parser.lex.next.kind != 'CLOSE_PAR':
+                raise SyntaxError("[Parser] Expected closing parenthesis")
+            Parser.lex.select_next()
+            return value
+        if Parser.lex.next.kind == 'INT':
+            value = Parser.lex.next.value
+            Parser.lex.select_next()
+            return value
+        else:
+            raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}, expected INT or '('")
+
+    @staticmethod
+    def parse_expression() -> int:
+        result = Parser.parse_term()
         # Enquanto houver + ou -
         while Parser.lex.next.kind in ('PLUS', 'MINUS'):
             op = Parser.lex.next.kind
             Parser.lex.select_next()
-
-            if Parser.lex.next.kind != 'INT':
-                exp = '+' if op == 'PLUS' else '-'
-                raise SyntaxError(f"[Parser] Expected INT after '{exp}'")
-
-            if op == 'PLUS':
-                result += Parser.lex.next.value
-            else:
-                result -= Parser.lex.next.value
-
-            Parser.lex.select_next()
-
+            rhs = Parser.parse_term()
+            result = result + rhs if op == 'PLUS' else result - rhs
         return result
 
     @staticmethod

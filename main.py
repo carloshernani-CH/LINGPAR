@@ -6,6 +6,45 @@ class Token:
         self.kind = kind   # 'INT', 'PLUS', 'MINUS', 'EOF', 'MULT', 'DIV'
         self.value = value # int | str | ''
 
+class Node:
+    def __init__(self, value=None, children=None):
+        self.value = value
+        self.children = children or []
+
+        def evaluate(self):
+            raise NotImplementedError()
+        
+class IntVal(Node):
+    def evaluate(self):
+        return self.value
+    
+class UnOp(Node):
+    def evaluate(self):
+        v = self.children[0].evaluate()
+        if self.value == '+':
+            return +v
+        elif self.value == '-':
+            return -v
+        else:
+            raise ValueError(f"Unknown unary operator {self.value}")
+
+
+class BinOp(Node):
+    def evaluate(self):
+        left = self.children[0].evaluate()
+        right = self.children[1].evaluate()
+        if self.value == '+':
+            return left + right
+        elif self.value == '-':
+            return left - right
+        elif self.value == '*':
+            return left * right
+        elif self.value == '/':
+            if right == 0:
+                raise ZeroDivisionError("Division by zero")
+            return left // right
+        else:
+            raise ValueError(f"Unknown binary operator {self.value}")
 class Lexer:
     def __init__(self, source: str):
         self.source = source

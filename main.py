@@ -82,13 +82,13 @@ class Lexer:
 
         if c.isalpha():
             ident_str = self._consume_while(lambda ch: ch.isalnum() or ch == '_')
-            upper = ident_str.upper()
-            if upper in Lexer.RESERVED:
-                # Normaliza: qualquer variação vira PRINT
+            # Aceita apenas Println (exatamente) ou PRINTLN (exatamente)
+            if ident_str == "Println" or ident_str == "PRINTLN":
                 self.next = Token('PRINT', 'PRINT')
             else:
                 self.next = Token('IDEN', ident_str)
             return self.next
+
 
         if c == '+':
             self._advance(); self.next = Token('PLUS', '+'); return self.next

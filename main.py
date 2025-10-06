@@ -28,8 +28,8 @@ class Token:
 
 
 class Lexer:
-    # Palavras reservadas. PRINT/PRINTLN aceitos como print de linha única.
-    RESERVED = {"PRINT", "PRINTLN", "if", "else", "while", "read", "Scanln"}
+    # Palavras reservadas aceitas.
+    RESERVED = {"PRINT", "PRINTLN", "if", "else", "while", "for", "read", "Scanln"}
 
     def __init__(self, source: str):
         self.source = source
@@ -70,7 +70,7 @@ class Lexer:
             self.next = Token('EOF', '')
             return self.next
 
-        # Separadores de fim de comando
+        # Terminadores de comando
         if c == '\n':
             self._advance()
             self.next = Token('END', '\n')
@@ -89,10 +89,7 @@ class Lexer:
         # Identificadores / Palavras-chave
         if c.isalpha() or c == '_':
             ident_str = self._consume_while(lambda ch: ch.isalnum() or ch == '_')
-            # Palavras-chave específicas (sensível a caso para as minúsculas)
-            if ident_str == "Println" or ident_str == "PRINTLN":
-                self.next = Token('PRINT', 'PRINT')
-            elif ident_str == "PRINT":
+            if ident_str in ("Println", "PRINTLN", "PRINT"):
                 self.next = Token('PRINT', 'PRINT')
             elif ident_str == "if":
                 self.next = Token('IF', 'if')
@@ -100,14 +97,16 @@ class Lexer:
                 self.next = Token('ELSE', 'else')
             elif ident_str == "while":
                 self.next = Token('WHILE', 'while')
+            elif ident_str == "for":
+                # 'for' mapeado para WHILE (linguagem do semestre)
+                self.next = Token('WHILE', 'for')
             elif ident_str in ("read", "Scanln"):
                 self.next = Token('READ', 'read')
             else:
                 self.next = Token('IDEN', ident_str)
             return self.next
 
-        # Operadores compostos devem ser verificados antes dos unitários
-        # &&, ||, ==
+        # Operadores compostos
         if c == '&' and self.position + 1 < len(self.source) and self.source[self.position+1] == '&':
             self.position += 2
             self.next = Token('AND', '&&')
@@ -121,7 +120,7 @@ class Lexer:
             self.next = Token('EQ', '==')
             return self.next
 
-        # Operadores e símbolos simples
+        # Operadores/símbolos simples
         if c == '+':
             self._advance(); self.next = Token('PLUS', '+'); return self.next
         if c == '-':
@@ -177,7 +176,7 @@ class SymbolTable:
         return self._table[name]
 
     def set(self, name: str, value: int):
-        if name.upper() in {"PRINT", "PRINTLN"} or name in {"if", "else", "while", "read", "Scanln"}:
+        if name.upper() in {"PRINT", "PRINTLN"} or name in {"if", "else", "while", "for", "read", "Scanln"}:
             raise SyntaxError(f"[SymbolTable] '{name}' is a reserved word and cannot be used as a variable name")
         self._table[name] = Variable(value)
 
@@ -317,7 +316,7 @@ class NoOp(Node):
 class Parser:
     lex: Lexer = None
 
-    # ---------- Factors / Terms / Expressions (arith + bool precedence) ----------
+    # ---------- Factors / Terms / Expressions (precedences) ----------
     @staticmethod
     def parse_factor() -> Node:
         token = Parser.lex.next
@@ -348,7 +347,7 @@ class Parser:
             return Identifier(name)
 
         if token.kind == 'READ':
-            # read() or Scanln()
+            # read() / Scanln()
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'OPEN_PAR':
                 raise SyntaxError("[Parser] Expected '(' after read")
@@ -417,7 +416,7 @@ class Parser:
         Parser.lex.select_next()
 
         statements = []
-        # Consome múltiplos END antes do conteúdo
+        # Ignora separadores iniciais
         while Parser.lex.next.kind == 'END':
             Parser.lex.select_next()
 
@@ -425,7 +424,6 @@ class Parser:
             stmt = Parser.parse_statement()
             if stmt is not None:
                 statements.append(stmt)
-            # Consome separadores opcionais
             while Parser.lex.next.kind == 'END':
                 Parser.lex.select_next()
 
@@ -459,17 +457,24 @@ class Parser:
             return Print(children=[expr])
 
         if token.kind == 'IF':
-            # if ( BoolExpr ) Statement [ else Statement ]
             Parser.lex.select_next()
-            if Parser.lex.next.kind != 'OPEN_PAR':
-                raise SyntaxError("[Parser] Expected '(' after if")
-            Parser.lex.select_next()
-            cond = Parser.parse_bool_expression()
-            if Parser.lex.next.kind != 'CLOSE_PAR':
-                raise SyntaxError("[Parser] Expected ')' after if condition")
-            Parser.lex.select_next()
+            cond = None
+            if Parser.lex.next.kind == 'OPEN_PAR':
+                Parser.lex.select_next()
+                cond = Parser.parse_bool_expression()
+                if Parser.lex.next.kind != 'CLOSE_PAR':
+                    raise SyntaxError("[Parser] Expected ')' after if condition")
+                Parser.lex.select_next()
+                # permite continuar após ')':  ) || expr
+                while Parser.lex.next.kind in ('AND', 'OR'):
+                    op = '&&' if Parser.lex.next.kind == 'AND' else '||'
+                    Parser.lex.select_next()
+                    right = Parser.parse_bool_term()
+                    cond = BinOp(op, [cond, right])
+            else:
+                cond = Parser.parse_bool_expression()
+
             then_stmt = Parser.parse_statement()
-            # opcional else
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
                 else_stmt = Parser.parse_statement()
@@ -477,15 +482,22 @@ class Parser:
             return If(children=[cond, then_stmt])
 
         if token.kind == 'WHILE':
-            # while ( BoolExpr ) Statement
             Parser.lex.select_next()
-            if Parser.lex.next.kind != 'OPEN_PAR':
-                raise SyntaxError("[Parser] Expected '(' after while")
-            Parser.lex.select_next()
-            cond = Parser.parse_bool_expression()
-            if Parser.lex.next.kind != 'CLOSE_PAR':
-                raise SyntaxError("[Parser] Expected ')' after while condition")
-            Parser.lex.select_next()
+            cond = None
+            if Parser.lex.next.kind == 'OPEN_PAR':
+                Parser.lex.select_next()
+                cond = Parser.parse_bool_expression()
+                if Parser.lex.next.kind != 'CLOSE_PAR':
+                    raise SyntaxError("[Parser] Expected ')' after while condition")
+                Parser.lex.select_next()
+                while Parser.lex.next.kind in ('AND', 'OR'):
+                    op = '&&' if Parser.lex.next.kind == 'AND' else '||'
+                    Parser.lex.select_next()
+                    right = Parser.parse_bool_term()
+                    cond = BinOp(op, [cond, right])
+            else:
+                cond = Parser.parse_bool_expression()
+
             body = Parser.parse_statement()
             return While(children=[cond, body])
 

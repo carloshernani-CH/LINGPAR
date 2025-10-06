@@ -315,6 +315,7 @@ class NoOp(Node):
 
 class Parser:
     lex: Lexer = None
+    strict_block_after_control: bool = False
 
     # ---------- Factors / Terms / Expressions (precedences) ----------
     @staticmethod
@@ -416,9 +417,18 @@ class Parser:
         Parser.lex.select_next()
 
         statements = []
-        # Ignora separadores iniciais
+        # Verifica alinhamento: se strict e '}' vier logo sem NEWLINE/; -> erro
+        if Parser.strict_block_after_control and Parser.lex.next.kind == 'CLOSE_BRA':
+            raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
+
+        saw_end = False
         while Parser.lex.next.kind == 'END':
+            saw_end = True
             Parser.lex.select_next()
+
+        if Parser.strict_block_after_control and not saw_end and Parser.lex.next.kind == 'CLOSE_BRA':
+            # '{ }' na mesma linha logo após if/else/while
+            raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         while Parser.lex.next.kind not in ('CLOSE_BRA', 'EOF'):
             stmt = Parser.parse_statement()
@@ -474,10 +484,26 @@ class Parser:
             else:
                 cond = Parser.parse_bool_expression()
 
-            then_stmt = Parser.parse_statement()
+                        # proíbe quebra de linha antes do then-statement
+            if Parser.lex.next.kind == 'END':
+                raise SyntaxError("[Parser] Unexpected token NEWLINE")
+            # se vier bloco, aplicar regras estritas
+            if Parser.lex.next.kind == 'OPEN_BRA':
+                Parser.strict_block_after_control = True
+                then_stmt = Parser.parse_block()
+                Parser.strict_block_after_control = False
+            else:
+                then_stmt = Parser.parse_statement()
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
-                else_stmt = Parser.parse_statement()
+                if Parser.lex.next.kind == 'END':
+                    raise SyntaxError("[Parser] Unexpected token NEWLINE")
+                if Parser.lex.next.kind == 'OPEN_BRA':
+                    Parser.strict_block_after_control = True
+                    else_stmt = Parser.parse_block()
+                    Parser.strict_block_after_control = False
+                else:
+                    else_stmt = Parser.parse_statement()
                 return If(children=[cond, then_stmt, else_stmt])
             return If(children=[cond, then_stmt])
 
@@ -498,7 +524,14 @@ class Parser:
             else:
                 cond = Parser.parse_bool_expression()
 
-            body = Parser.parse_statement()
+            if Parser.lex.next.kind == 'END':
+                raise SyntaxError("[Parser] Unexpected token NEWLINE")
+            if Parser.lex.next.kind == 'OPEN_BRA':
+                Parser.strict_block_after_control = True
+                body = Parser.parse_block()
+                Parser.strict_block_after_control = False
+            else:
+                body = Parser.parse_statement()
             return While(children=[cond, body])
 
         if token.kind == 'IDEN':

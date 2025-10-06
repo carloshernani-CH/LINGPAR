@@ -10,7 +10,7 @@ from typing import Dict, Optional
 class PrePro:
     @staticmethod
     def filter(code: str) -> str:
-        # Remove tudo após '//' até o fim da linha, preservando '\n'
+        # Remove comentários C++ (//...) preservando quebras de linha
         return re.sub(r"//.*$", "", code, flags=re.MULTILINE)
 
 
@@ -28,8 +28,12 @@ class Token:
 
 
 class Lexer:
-    # Palavras reservadas (case-insensitive). PRINTLN será tratado como PRINT.
-    RESERVED = {"PRINT", "PRINTLN"}
+    # Palavras reservadas (case-insensitive)
+    KEYWORDS = {
+        "PRINT": "PRINT", "PRINTLN": "PRINT",
+        "IF": "IF", "ELSE": "ELSE", "WHILE": "WHILE",
+        "READ": "READ"
+    }
 
     def __init__(self, source: str):
         self.source = source
@@ -54,7 +58,7 @@ class Lexer:
         return self.source[start:self.position]
 
     def select_next(self) -> Token:
-        # Ignora espaços e tabs; não ignora '\n'
+        # Consome espaços; '\n' vira separador 'END'
         while True:
             c = self._peek()
             if c is None:
@@ -75,37 +79,48 @@ class Lexer:
             self.next = Token('END', '\n')
             return self.next
 
+        # Números
         if c.isdigit():
-            num_str = self._consume_while(lambda ch: ch.isdigit())
-            self.next = Token('INT', int(num_str))
+            num = self._consume_while(lambda ch: ch.isdigit())
+            self.next = Token('INT', int(num))
             return self.next
 
-        if c.isalpha():
-            ident_str = self._consume_while(lambda ch: ch.isalnum() or ch == '_')
-            # Aceita apenas Println (exatamente) ou PRINTLN (exatamente)
-            if ident_str == "Println" or ident_str == "PRINTLN":
-                self.next = Token('PRINT', 'PRINT')
+        # Identificadores / keywords (case-insensitive)
+        if c.isalpha() or c == '_':
+            ident = self._consume_while(lambda ch: ch.isalnum() or ch == '_')
+            upper = ident.upper()
+            if upper in Lexer.KEYWORDS:
+                self.next = Token(Lexer.KEYWORDS[upper], upper)
             else:
-                self.next = Token('IDEN', ident_str)
+                self.next = Token('IDEN', ident)
             return self.next
 
+        # Operadores compostos primeiro
+        if c == '&' and self.position + 1 < len(self.source) and self.source[self.position+1] == '&':
+            self.position += 2
+            self.next = Token('AND', '&&'); return self.next
+        if c == '|' and self.position + 1 < len(self.source) and self.source[self.position+1] == '|':
+            self.position += 2
+            self.next = Token('OR', '||'); return self.next
+        if c == '=' and self.position + 1 < len(self.source) and self.source[self.position+1] == '=':
+            self.position += 2
+            self.next = Token('EQ', '=='); return self.next
 
-        if c == '+':
-            self._advance(); self.next = Token('PLUS', '+'); return self.next
-        if c == '-':
-            self._advance(); self.next = Token('MINUS', '-'); return self.next
-        if c == '*':
-            self._advance(); self.next = Token('MULT', '*'); return self.next
-        if c == '/':
-            self._advance(); self.next = Token('DIV', '/'); return self.next
-        if c == '(':
-            self._advance(); self.next = Token('OPEN_PAR', '('); return self.next
-        if c == ')':
-            self._advance(); self.next = Token('CLOSE_PAR', ')'); return self.next
-        if c == '=':
-            self._advance(); self.next = Token('ASSIGN', '='); return self.next
+        # Símbolos simples
+        table = {
+            '+': 'PLUS', '-': 'MINUS', '*': 'MULT', '/': 'DIV',
+            '(': 'OPEN_PAR', ')': 'CLOSE_PAR',
+            '{': 'OPEN_BRA', '}': 'CLOSE_BRA',
+            '=': 'ASSIGN',
+            '<': 'LT', '>': 'GT',
+            '!': 'NOT'
+        }
+        if c in table:
+            self._advance()
+            self.next = Token(table[c], c)
+            return self.next
 
-        raise SyntaxError(f"[Lexer] Invalid symbol {c!r} at position {self.position}")
+        raise SyntaxError(f"[Lexer] Símbolo inválido {c!r} em {self.position}")
 
 
 # =========================
@@ -130,12 +145,13 @@ class SymbolTable:
 
     def get(self, name: str) -> Variable:
         if name not in self._table:
-            raise NameError(f"[SymbolTable] Variable '{name}' not defined")
+            raise NameError(f"[SymbolTable] Variável '{name}' não definida")
         return self._table[name]
 
     def set(self, name: str, value: int):
-        if name.upper() in Lexer.RESERVED:
-            raise SyntaxError(f"[SymbolTable] '{name}' is a reserved word and cannot be used as a variable name")
+        # Bloqueia keywords
+        if name.upper() in Lexer.KEYWORDS:
+            raise SyntaxError(f"[SymbolTable] '{name}' é palavra reservada")
         self._table[name] = Variable(value)
 
 
@@ -162,39 +178,49 @@ class Identifier(Node):
         return st.get(self.value).value
 
 
+class Read(Node):
+    def evaluate(self, st: SymbolTable):
+        val = int(input())
+        return val
+
+
 class UnOp(Node):
     def evaluate(self, st: SymbolTable):
         v = self.children[0].evaluate(st)
         if self.value == '+':
             return +v
-        elif self.value == '-':
+        if self.value == '-':
             return -v
-        else:
-            raise ValueError(f"[UnOp] Unknown unary operator {self.value}")
+        if self.value == '!':
+            return 0 if v else 1
+        raise ValueError(f"[UnOp] Operador desconhecido {self.value}")
 
 
 class BinOp(Node):
     def evaluate(self, st: SymbolTable):
-        left = self.children[0].evaluate(st)
-        right = self.children[1].evaluate(st)
-        if self.value == '+':
-            return left + right
-        elif self.value == '-':
-            return left - right
-        elif self.value == '*':
-            return left * right
-        elif self.value == '/':
-            if right == 0:
-                raise ZeroDivisionError("Division by zero")
-            return left // right
-        else:
-            raise ValueError(f"[BinOp] Unknown binary operator {self.value}")
+        a = self.children[0].evaluate(st)
+        b = self.children[1].evaluate(st)
+
+        if self.value == '+':   return a + b
+        if self.value == '-':   return a - b
+        if self.value == '*':   return a * b
+        if self.value == '/':
+            if b == 0: raise ZeroDivisionError("Divisão por zero")
+            return a // b
+
+        if self.value == '==':  return 1 if a == b else 0
+        if self.value == '<':   return 1 if a <  b else 0
+        if self.value == '>':   return 1 if a >  b else 0
+        if self.value == '&&':  return 1 if (a != 0 and b != 0) else 0
+        if self.value == '||':  return 1 if (a != 0 or  b != 0) else 0
+
+        raise ValueError(f"[BinOp] Operador desconhecido {self.value}")
 
 
 class Assignment(Node):
     def evaluate(self, st: SymbolTable):
         if not isinstance(self.children[0], Identifier):
-            raise SyntaxError("[Assignment] Left-hand side must be an Identifier")
+            raise SyntaxError("[Assignment] LHS deve ser Identifier")
         name = self.children[0].value
         val = self.children[1].evaluate(st)
         st.set(name, val)
@@ -215,6 +241,25 @@ class Block(Node):
         return None
 
 
+class If(Node):
+    # value=None; children = [cond, thenBlock, (optional) elseBlock]
+    def evaluate(self, st: SymbolTable):
+        cond = self.children[0].evaluate(st)
+        if cond != 0:
+            return self.children[1].evaluate(st)
+        elif len(self.children) == 3:
+            return self.children[2].evaluate(st)
+        return None
+
+
+class While(Node):
+    # children = [cond, body]
+    def evaluate(self, st: SymbolTable):
+        while self.children[0].evaluate(st) != 0:
+            self.children[1].evaluate(st)
+        return None
+
+
 class NoOp(Node):
     def evaluate(self, st: SymbolTable):
         return None
@@ -227,46 +272,53 @@ class NoOp(Node):
 class Parser:
     lex: Lexer = None
 
+    # ---------- Factors now accept: INT | IDEN | READ() | ( BoolExpr ) | +Factor | -Factor | !Factor ----------
     @staticmethod
     def parse_factor() -> Node:
-        token = Parser.lex.next
+        t = Parser.lex.next
 
-        if token.kind in ('PLUS', 'MINUS'):
-            op = token.value
+        if t.kind in ('PLUS', 'MINUS', 'NOT'):
+            op_map = {'PLUS': '+', 'MINUS': '-', 'NOT': '!'}
+            op = op_map[t.kind]
             Parser.lex.select_next()
-            node = Parser.parse_factor()
-            return UnOp(op, [node])
+            return UnOp(op, [Parser.parse_factor()])
 
-        if token.kind == 'OPEN_PAR':
+        if t.kind == 'OPEN_PAR':
             Parser.lex.select_next()
-            node = Parser.parse_expression()
+            node = Parser.parse_bool_expression()  # permite (expr relacional/booleana) também
             if Parser.lex.next.kind != 'CLOSE_PAR':
-                raise SyntaxError("[Parser] Expected closing parenthesis ')'")
+                raise SyntaxError("[Parser] Esperado ')'")
             Parser.lex.select_next()
             return node
 
-        if token.kind == 'INT':
-            n = token.value
+        if t.kind == 'READ':
             Parser.lex.select_next()
-            return IntVal(n)
-
-        if token.kind == 'IDEN':
-            name = token.value
+            if Parser.lex.next.kind != 'OPEN_PAR':
+                raise SyntaxError("[Parser] Esperado '(' após READ")
             Parser.lex.select_next()
-            return Identifier(name)
+            if Parser.lex.next.kind != 'CLOSE_PAR':
+                raise SyntaxError("[Parser] Esperado ')' em READ()")
+            Parser.lex.select_next()
+            return Read()
 
-        raise SyntaxError(f"[Parser] Unexpected token {token.kind} in factor")
+        if t.kind == 'INT':
+            Parser.lex.select_next()
+            return IntVal(t.value)
 
-        # fim parse_factor
+        if t.kind == 'IDEN':
+            Parser.lex.select_next()
+            return Identifier(t.value)
 
+        raise SyntaxError(f"[Parser] Token inesperado em Factor: {t.kind}")
+
+    # ---------- Arithmetic ----------
     @staticmethod
     def parse_term() -> Node:
         node = Parser.parse_factor()
         while Parser.lex.next.kind in ('MULT', 'DIV'):
             op = Parser.lex.next.value
             Parser.lex.select_next()
-            rhs = Parser.parse_factor()
-            node = BinOp(op, [node, rhs])
+            node = BinOp(op, [node, Parser.parse_factor()])
         return node
 
     @staticmethod
@@ -275,47 +327,138 @@ class Parser:
         while Parser.lex.next.kind in ('PLUS', 'MINUS'):
             op = Parser.lex.next.value
             Parser.lex.select_next()
-            rhs = Parser.parse_term()
-            node = BinOp(op, [node, rhs])
+            node = BinOp(op, [node, Parser.parse_term()])
+        return node
+
+    # ---------- Relational ----------
+    @staticmethod
+    def parse_rel_expression() -> Node:
+        node = Parser.parse_expression()
+        while Parser.lex.next.kind in ('EQ', 'LT', 'GT'):
+            kind = Parser.lex.next.kind
+            op = '==' if kind == 'EQ' else '<' if kind == 'LT' else '>'
+            Parser.lex.select_next()
+            node = BinOp(op, [node, Parser.parse_expression()])
+        return node
+
+    # ---------- Bool (AND / OR) ----------
+    @staticmethod
+    def parse_bool_term() -> Node:
+        node = Parser.parse_rel_expression()
+        while Parser.lex.next.kind == 'AND':
+            Parser.lex.select_next()
+            node = BinOp('&&', [node, Parser.parse_rel_expression()])
         return node
 
     @staticmethod
-    def parse_statement() -> Optional[Node]:
-        token = Parser.lex.next
+    def parse_bool_expression() -> Node:
+        node = Parser.parse_bool_term()
+        while Parser.lex.next.kind == 'OR':
+            Parser.lex.select_next()
+            node = BinOp('||', [node, Parser.parse_bool_term()])
+        return node
 
-        if token.kind == 'END':
+    # ---------- Blocks ----------
+    @staticmethod
+    def parse_block() -> Node:
+        # Espera '{' Statement* '}'
+        if Parser.lex.next.kind != 'OPEN_BRA':
+            # também aceitamos "um único Statement" como bloco
+            stmt = Parser.parse_statement()
+            return Block(children=[] if stmt is None else [stmt])
+
+        Parser.lex.select_next()  # consume '{'
+        statements = []
+        while Parser.lex.next.kind == 'END':
+            Parser.lex.select_next()
+        while Parser.lex.next.kind not in ('CLOSE_BRA', 'EOF'):
+            stmt = Parser.parse_statement()
+            if stmt is not None:
+                statements.append(stmt)
+            while Parser.lex.next.kind == 'END':
+                Parser.lex.select_next()
+        if Parser.lex.next.kind != 'CLOSE_BRA':
+            raise SyntaxError("[Parser] Esperado '}' para fechar bloco")
+        Parser.lex.select_next()
+        return Block(children=statements)
+
+    # ---------- Statements ----------
+    @staticmethod
+    def parse_statement() -> Optional[Node]:
+        t = Parser.lex.next
+
+        # Separador vazio
+        if t.kind == 'END':
             Parser.lex.select_next()
             return NoOp()
 
-        if token.kind == 'PRINT':
+        # PRINT(expr)
+        if t.kind == 'PRINT':
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'OPEN_PAR':
-                raise SyntaxError("[Parser] Expected '(' after PRINT")
+                raise SyntaxError("[Parser] Esperado '(' após PRINT")
             Parser.lex.select_next()
-            expr = Parser.parse_expression()
+            expr = Parser.parse_bool_expression()
             if Parser.lex.next.kind != 'CLOSE_PAR':
-                raise SyntaxError("[Parser] Expected ')' after PRINT expression")
+                raise SyntaxError("[Parser] Esperado ')' após PRINT")
             Parser.lex.select_next()
             if Parser.lex.next.kind == 'END':
                 Parser.lex.select_next()
             return Print(children=[expr])
 
-        if token.kind == 'IDEN':
-            name = token.value
+        # if (cond) block [else block]
+        if t.kind == 'IF':
+            Parser.lex.select_next()
+            if Parser.lex.next.kind != 'OPEN_PAR':
+                raise SyntaxError("[Parser] Esperado '(' após IF")
+            Parser.lex.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lex.next.kind != 'CLOSE_PAR':
+                raise SyntaxError("[Parser] Esperado ')' após condição do IF")
+            Parser.lex.select_next()
+            then_blk = Parser.parse_block()
+
+            if Parser.lex.next.kind == 'ELSE':
+                Parser.lex.select_next()
+                else_blk = Parser.parse_block()
+                return If(children=[cond, then_blk, else_blk])
+            return If(children=[cond, then_blk])
+
+        # while (cond) block
+        if t.kind == 'WHILE':
+            Parser.lex.select_next()
+            if Parser.lex.next.kind != 'OPEN_PAR':
+                raise SyntaxError("[Parser] Esperado '(' após WHILE")
+            Parser.lex.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lex.next.kind != 'CLOSE_PAR':
+                raise SyntaxError("[Parser] Esperado ')' após condição do WHILE")
+            Parser.lex.select_next()
+            body = Parser.parse_block()
+            return While(children=[cond, body])
+
+        # Bloco explícito iniciando com '{'
+        if t.kind == 'OPEN_BRA':
+            return Parser.parse_block()
+
+        # Atribuição: id = BoolExpr
+        if t.kind == 'IDEN':
+            name = t.value
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'ASSIGN':
-                raise SyntaxError("[Parser] Expected '=' after identifier")
+                raise SyntaxError("[Parser] Esperado '=' após identificador")
             Parser.lex.select_next()
-            expr = Parser.parse_expression()
+            expr = Parser.parse_bool_expression()
             if Parser.lex.next.kind == 'END':
                 Parser.lex.select_next()
             return Assignment(children=[Identifier(name), expr])
 
-        if token.kind == 'EOF':
+        if t.kind == 'EOF':
             return None
 
-        raise SyntaxError(f"[Parser] Unexpected token {token.kind} at start of statement")
+        raise SyntaxError(f"[Parser] Início inesperado de statement: {t.kind}")
 
+    # ---------- Program ----------
     @staticmethod
     def parse_program() -> Block:
         statements = []
@@ -335,7 +478,7 @@ class Parser:
         Parser.lex.select_next()
         program = Parser.parse_program()
         if Parser.lex.next.kind != 'EOF':
-            raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind} after program")
+            raise SyntaxError(f"[Parser] Token inesperado após programa: {Parser.lex.next.kind}")
         return program
 
 

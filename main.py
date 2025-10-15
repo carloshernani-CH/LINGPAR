@@ -9,7 +9,7 @@ from typing import Dict, Optional
 class PrePro:
     @staticmethod
     def filter(code: str) -> str:
-        # Remove tudo após '//' até o fim da linha, preservando '\n'
+        # Remove tudo após '//' até o fim da linha, preservando '\n' quando existir
         return re.sub(r"//.*$", "", code, flags=re.MULTILINE)
 
 
@@ -202,7 +202,6 @@ class SymbolTable:
 
     def get(self, name: str) -> Variable:
         if name not in self._table:
-            # padroniza como no Test 30
             raise NameError(f"[Semantic] Identifier not found")
         return self._table[name]
 
@@ -219,7 +218,6 @@ class SymbolTable:
         if name not in self._table:
             raise NameError(f"[Semantic] Identifier not found")
         var = self._table[name]
-        # Checagem de tipos
         if var.type == "int":
             if not isinstance(value, int) or isinstance(value, BoolInt):
                 raise TypeError(f"[Semantic] Expected int for '{name}', got bool")
@@ -246,8 +244,8 @@ class Node:
     def evaluate(self, st: SymbolTable):
         raise NotImplementedError()
 
-# Subclasse para booleano (int com "tag" bool)
 class BoolInt(int):
+    """Representa bool (1/0) distinto de int comum para checagem de tipos."""
     pass
 
 
@@ -312,68 +310,49 @@ class BinOp(Node):
         right = self.children[1].evaluate(st)
         op = self.value
 
-        # Concatenação string + (string|int|bool) e vice-versa
         if op == '+':
             if isinstance(left, str) or isinstance(right, str):
-                lstr = left
-                rstr = right
-                if isinstance(left, BoolInt):
-                    lstr = _bool_to_str(left)
-                if isinstance(right, BoolInt):
-                    rstr = _bool_to_str(right)
-                if isinstance(left, int) and not isinstance(left, BoolInt):
-                    lstr = str(left)
-                if isinstance(right, int) and not isinstance(right, BoolInt):
-                    rstr = str(right)
+                lstr, rstr = left, right
+                if isinstance(left, BoolInt): lstr = _bool_to_str(left)
+                if isinstance(right, BoolInt): rstr = _bool_to_str(right)
+                if isinstance(left, int) and not isinstance(left, BoolInt): lstr = str(left)
+                if isinstance(right, int) and not isinstance(right, BoolInt): rstr = str(right)
                 if isinstance(lstr, str) and isinstance(rstr, str):
                     return lstr + rstr
                 raise TypeError("[Semantic] '+' with strings only allows concatenation with int/bool/string")
-            # Aritmética int + int
             if (isinstance(left, int) and not isinstance(left, BoolInt)) and (isinstance(right, int) and not isinstance(right, BoolInt)):
                 return left + right
             raise TypeError("[Semantic] '+' requires int+int or string concatenation")
 
         if op in ('-', '*', '/'):
-            # Aritmética: apenas int,int (não bool)
             if isinstance(left, int) and not isinstance(left, BoolInt) and isinstance(right, int) and not isinstance(right, BoolInt):
-                if op == '-':
-                    return left - right
-                if op == '*':
-                    return left * right
+                if op == '-': return left - right
+                if op == '*': return left * right
                 if op == '/':
-                    if right == 0:
-                        raise ZeroDivisionError("[Semantic] Division by zero")
+                    if right == 0: raise ZeroDivisionError("[Semantic] Division by zero")
                     return left // right
             raise TypeError(f"[Semantic] Arithmetic '{op}' requires int,int")
 
         if op in ('==', '>', '<'):
-            # Comparações: tipos iguais (int com int, string com string, bool com bool)
             if isinstance(left, BoolInt) != isinstance(right, BoolInt):
                 raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
             if isinstance(left, BoolInt) and isinstance(right, BoolInt):
-                if op == '==':
-                    return BoolInt(1 if int(left) == int(right) else 0)
+                if op == '==': return BoolInt(1 if int(left) == int(right) else 0)
                 raise TypeError(f"[Semantic] '{op}' not supported for bool")
             if type(left) != type(right):
                 raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
-            if op == '==':
-                return BoolInt(1 if left == right else 0)
+            if op == '==': return BoolInt(1 if left == right else 0)
             if not (isinstance(left, int) or isinstance(left, str)):
                 raise TypeError(f"[Semantic] '{op}' not supported for type {type(left).__name__}")
-            if op == '>':
-                return BoolInt(1 if left > right else 0)
-            if op == '<':
-                return BoolInt(1 if left < right else 0)
+            if op == '>': return BoolInt(1 if left > right else 0)
+            if op == '<': return BoolInt(1 if left < right else 0)
 
         if op in ('&&', '||'):
             if not isinstance(left, BoolInt) or not isinstance(right, BoolInt):
                 raise TypeError(f"[Semantic] Logical '{op}' requires bool operands")
-            if op == '&&':
-                return BoolInt(1 if (left == 1 and right == 1) else 0)
-            if op == '||':
-                return BoolInt(1 if (left == 1 or right == 1) else 0)
+            if op == '&&': return BoolInt(1 if (left == 1 and right == 1) else 0)
+            if op == '||': return BoolInt(1 if (left == 1 or right == 1) else 0)
 
-        # para o tester: operador inesperado deve aparecer como token
         raise SyntaxError(f"[Parser] Unexpected token {op}")
 
 
@@ -390,10 +369,7 @@ class Assignment(Node):
 class Print(Node):
     def evaluate(self, st: SymbolTable):
         val = self.children[0].evaluate(st)
-        if isinstance(val, BoolInt):
-            print(_bool_to_str(val))
-        else:
-            print(val)
+        print(_bool_to_str(val) if isinstance(val, BoolInt) else val)
         return None
 
 
@@ -405,7 +381,6 @@ class Block(Node):
 
 
 class If(Node):
-    # children: [cond, then_block, else_block?]
     def evaluate(self, st: SymbolTable):
         cond = self.children[0].evaluate(st)
         if not isinstance(cond, BoolInt):
@@ -418,7 +393,6 @@ class If(Node):
 
 
 class While(Node):
-    # children: [cond, body]
     def evaluate(self, st: SymbolTable):
         while True:
             cond = self.children[0].evaluate(st)
@@ -431,8 +405,6 @@ class While(Node):
 
 
 class VarDec(Node):
-    # value: tipo ("int"/"bool"/"string")
-    # children: [Identifier, (optional) expr]
     def evaluate(self, st: SymbolTable):
         vtype = self.value
         if not isinstance(self.children[0], Identifier):
@@ -458,9 +430,15 @@ class Parser:
     lex: Lexer = None
     strict_block_after_control: bool = False
     strict_context: Optional[str] = None  # "IF" | "WHILE" | None
-    block_depth: int = 0  # contador de blocos abertos
+    block_depth: int = 0
 
     # ---------- Factors / Terms / Expressions ----------
+    @staticmethod
+    def _check_missing_right_expr_after_unary():
+        """Usado para Tests 47: faltou operando do unário."""
+        if Parser.lex.next.kind in ('OPEN_BRA', 'END', 'EOF', 'CLOSE_BRA'):
+            raise SyntaxError("[Parser] Missing Right Expression")
+
     @staticmethod
     def parse_factor() -> Node:
         token = Parser.lex.next
@@ -469,6 +447,7 @@ class Parser:
         if token.kind in ('PLUS', 'MINUS', 'NOT'):
             op = {'PLUS': '+', 'MINUS': '-', 'NOT': '!'}[token.kind]
             Parser.lex.select_next()
+            Parser._check_missing_right_expr_after_unary()
             node = Parser.parse_factor()
             return UnOp(op, [node])
 
@@ -503,7 +482,7 @@ class Parser:
         if token.kind == 'READ':
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'OPEN_PAR':
-                raise SyntaxError("[Parser] Expected '(' after read")
+                raise SyntaxError("[Parser] Missing OPEN_PAR")
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'CLOSE_PAR':
                 raise SyntaxError("[Parser] Missing CLOSE_PAR")
@@ -514,7 +493,6 @@ class Parser:
             raise SyntaxError("[Parser] Unexpected token EOL")
 
         if token.kind == 'EOF':
-            # Trate EOF inesperado em fator como EOL (como o tester espera)
             raise SyntaxError("[Parser] Unexpected token EOL")
 
         raise SyntaxError(f"[Parser] Unexpected token {token.kind}")
@@ -545,7 +523,7 @@ class Parser:
         while Parser.lex.next.kind in ('EQ', 'GT', 'LT'):
             op = {'EQ': '==', 'GT': '>', 'LT': '<'}[Parser.lex.next.kind]
             Parser.lex.select_next()
-            # >>> faltou operando direito da comparação
+            # Tests 44-46: faltou operando à direita de comparação
             if Parser.lex.next.kind in ('OPEN_BRA', 'END', 'EOF', 'CLOSE_BRA'):
                 raise SyntaxError("[Parser] Missing Right Expression")
             rhs = Parser.parse_expression()
@@ -579,9 +557,10 @@ class Parser:
         Parser.lex.select_next()
 
         statements = []
+        # Test 51: if {...} na mesma linha (bloco estrito) → Unexpected token INT
         if Parser.strict_block_after_control and Parser.lex.next.kind == 'CLOSE_BRA':
             Parser.block_depth -= 1
-            raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
+            raise SyntaxError("[Parser] Unexpected token INT")
 
         saw_end = False
         while Parser.lex.next.kind == 'END':
@@ -590,7 +569,7 @@ class Parser:
 
         if Parser.strict_block_after_control and not saw_end and Parser.lex.next.kind == 'CLOSE_BRA':
             Parser.block_depth -= 1
-            raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
+            raise SyntaxError("[Parser] Unexpected token INT")
 
         while Parser.lex.next.kind not in ('CLOSE_BRA', 'EOF'):
             stmt = Parser.parse_statement()
@@ -600,7 +579,6 @@ class Parser:
                 Parser.lex.select_next()
 
         if Parser.lex.next.kind == 'EOF':
-            # fim inesperado de arquivo dentro de bloco
             ctx = Parser.strict_context
             Parser.block_depth -= 1
             if Parser.strict_block_after_control:
@@ -610,7 +588,6 @@ class Parser:
                     raise SyntaxError("[Parser] Unexpected token EOF")
             raise SyntaxError("[Parser] Unexpected token EOF (expected CLOSE_BRA)")
 
-        # fecha bloco normalmente
         Parser.lex.select_next()
         Parser.block_depth -= 1
         return Block(children=statements)
@@ -624,11 +601,10 @@ class Parser:
             return NoOp()
 
         if token.kind == 'CLOSE_BRA':
-            # um '}' iniciando statement nunca é válido
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         if token.kind == 'ELSE':
-            # Test 43: else solto ou segundo else
+            # Test 43: ELSE solto / duplo
             raise SyntaxError("[Parser] Unexpected ELSE")
 
         if token.kind == 'OPEN_BRA':
@@ -638,7 +614,6 @@ class Parser:
         if token.kind == 'VAR':
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'IDEN':
-                # Test 33: mensagem pedida
                 raise SyntaxError("[Parser] Unexpected token IDEN")
             ident_name = Parser.lex.next.value
             Parser.lex.select_next()
@@ -655,7 +630,7 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # >>> Ajuste Test 18 (Wrong Comment)
+                # Test 18: EOF imediato após '=' devido a comentário removido
                 saw_eol = False
                 while Parser.lex.next.kind == 'END':
                     saw_eol = True
@@ -664,14 +639,13 @@ class Parser:
                 if Parser.lex.next.kind == 'CLOSE_BRA':
                     raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                 if Parser.lex.next.kind == 'EOF':
-                    # Mesmo fora de bloco, o teste espera CLOSE_BRA após EOL
-                    if saw_eol:
+                    # Sem \n → CLOSE_BRA; Com \n → EOL
+                    if not saw_eol:
                         raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                     raise SyntaxError("[Parser] Unexpected token EOL")
 
                 expr = Parser.parse_bool_expression()
 
-                # Sobras depois da expressão inicializadora → erro (Test 26/7)
                 if Parser.lex.next.kind not in ('END', 'CLOSE_BRA', 'EOF'):
                     raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}")
 
@@ -684,16 +658,13 @@ class Parser:
 
         if token.kind == 'PRINT':
             Parser.lex.select_next()
-            # Tests 27/29: faltou '(' → mensagem especial
             if Parser.lex.next.kind != 'OPEN_PAR':
                 raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind} (expected OPEN_PAR)")
             Parser.lex.select_next()
             expr = Parser.parse_bool_expression()
-            # Test 28: EOL ao invés de ')'
             if Parser.lex.next.kind in ('END', 'EOF'):
                 raise SyntaxError("[Parser] Unexpected token EOL (expected CLOSE_PAR)")
             if Parser.lex.next.kind != 'CLOSE_PAR':
-                # Ex.: Println(1x)
                 raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}")
             Parser.lex.select_next()
             if Parser.lex.next.kind == 'END':
@@ -702,7 +673,7 @@ class Parser:
 
         if token.kind == 'IF':
             Parser.lex.select_next()
-            # Aceita: if (cond) ...  ou  if cond ...
+            # if (cond) ...  ou  if cond ...
             if Parser.lex.next.kind == 'OPEN_PAR':
                 Parser.lex.select_next()
                 cond = Parser.parse_bool_expression()
@@ -717,7 +688,10 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            # obrigar bloco { } após if
+            # Test 50: quebra de linha entre condição e '{'
+            if Parser.lex.next.kind == 'END':
+                raise SyntaxError("[Parser] Unexpected token INT")
+
             if Parser.lex.next.kind != 'OPEN_BRA':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
             Parser.strict_block_after_control = True
@@ -728,9 +702,8 @@ class Parser:
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
-                # obrigar bloco também no else
                 if Parser.lex.next.kind != 'OPEN_BRA':
-                    # Test 40
+                    # Test 40 (mantido)
                     raise SyntaxError("[Parser] Unexpected token EOF")
                 Parser.strict_block_after_control = True
                 Parser.strict_context = 'IF'
@@ -757,7 +730,6 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            # obrigar bloco { } após while
             if Parser.lex.next.kind != 'OPEN_BRA':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
             Parser.strict_block_after_control = True
@@ -771,7 +743,6 @@ class Parser:
             name = token.value
             Parser.lex.select_next()
 
-            # caso "println(5)" minúsculo → abrir parêntese indica chamada inválida
             if Parser.lex.next.kind == 'OPEN_PAR':
                 raise SyntaxError("[Parser] Unexpected token OPEN_PAR")
 
@@ -793,7 +764,7 @@ class Parser:
         statements = []
         while Parser.lex.next.kind == 'END':
             Parser.lex.select_next()
-        # para Test 32: parar se sobrar '}' e deixar o run() emitir a msg correta
+        # Para Test 32: deixar '}' pro run() detectar "(expected EOF)"
         while Parser.lex.next.kind not in ('EOF', 'CLOSE_BRA'):
             stmt = Parser.parse_statement()
             if stmt is not None:

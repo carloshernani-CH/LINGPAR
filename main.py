@@ -545,6 +545,9 @@ class Parser:
         while Parser.lex.next.kind in ('EQ', 'GT', 'LT'):
             op = {'EQ': '==', 'GT': '>', 'LT': '<'}[Parser.lex.next.kind]
             Parser.lex.select_next()
+            # >>> faltou operando direito da comparação
+            if Parser.lex.next.kind in ('OPEN_BRA', 'END', 'EOF', 'CLOSE_BRA'):
+                raise SyntaxError("[Parser] Missing Right Expression")
             rhs = Parser.parse_expression()
             node = BinOp(op, [node, rhs])
         return node
@@ -601,7 +604,6 @@ class Parser:
             ctx = Parser.strict_context
             Parser.block_depth -= 1
             if Parser.strict_block_after_control:
-                # Diferenciar mensagens
                 if ctx == 'IF':
                     raise SyntaxError("[Parser] Missing CLOSE_BRA")
                 if ctx == 'WHILE':
@@ -620,6 +622,14 @@ class Parser:
         if token.kind == 'END':
             Parser.lex.select_next()
             return NoOp()
+
+        if token.kind == 'CLOSE_BRA':
+            # um '}' iniciando statement nunca é válido
+            raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
+
+        if token.kind == 'ELSE':
+            # Test 43: else solto ou segundo else
+            raise SyntaxError("[Parser] Unexpected ELSE")
 
         if token.kind == 'OPEN_BRA':
             return Parser.parse_block()
@@ -645,7 +655,7 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # >>> Ajuste Test 18 com contexto de bloco
+                # >>> Ajuste Test 18 (Wrong Comment)
                 saw_eol = False
                 while Parser.lex.next.kind == 'END':
                     saw_eol = True
@@ -654,7 +664,8 @@ class Parser:
                 if Parser.lex.next.kind == 'CLOSE_BRA':
                     raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                 if Parser.lex.next.kind == 'EOF':
-                    if Parser.block_depth > 0 and saw_eol:
+                    # Mesmo fora de bloco, o teste espera CLOSE_BRA após EOL
+                    if saw_eol:
                         raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                     raise SyntaxError("[Parser] Unexpected token EOL")
 

@@ -432,13 +432,20 @@ class Parser:
     strict_context: Optional[str] = None  # "IF" | "WHILE" | None
     block_depth: int = 0
 
-    # ---------- Factors / Terms / Expressions ----------
+    # ---------- Helpers ----------
     @staticmethod
     def _check_missing_right_expr_after_unary():
-        """Usado para Tests 47: faltou operando do unário."""
-        if Parser.lex.next.kind in ('OPEN_BRA', 'END', 'EOF', 'CLOSE_BRA'):
+        """
+        Tests:
+        - 47: '!' seguido de '{' -> Missing Right Expression
+        - 4/5/6: unário seguido de EOL/EOF/'}' -> Unexpected token EOL
+        """
+        if Parser.lex.next.kind in ('OPEN_BRA',):
             raise SyntaxError("[Parser] Missing Right Expression")
+        if Parser.lex.next.kind in ('END', 'EOF', 'CLOSE_BRA'):
+            raise SyntaxError("[Parser] Unexpected token EOL")
 
+    # ---------- Factors / Terms / Expressions ----------
     @staticmethod
     def parse_factor() -> Node:
         token = Parser.lex.next
@@ -523,7 +530,7 @@ class Parser:
         while Parser.lex.next.kind in ('EQ', 'GT', 'LT'):
             op = {'EQ': '==', 'GT': '>', 'LT': '<'}[Parser.lex.next.kind]
             Parser.lex.select_next()
-            # Tests 44-46: faltou operando à direita de comparação
+            # Comparação sem operando direito:
             if Parser.lex.next.kind in ('OPEN_BRA', 'END', 'EOF', 'CLOSE_BRA'):
                 raise SyntaxError("[Parser] Missing Right Expression")
             rhs = Parser.parse_expression()
@@ -557,7 +564,7 @@ class Parser:
         Parser.lex.select_next()
 
         statements = []
-        # Test 51: if {...} na mesma linha (bloco estrito) → Unexpected token INT
+        # Bloco estrito vazio colado ao controle → erro (usado por testes antigos)
         if Parser.strict_block_after_control and Parser.lex.next.kind == 'CLOSE_BRA':
             Parser.block_depth -= 1
             raise SyntaxError("[Parser] Unexpected token INT")
@@ -604,7 +611,7 @@ class Parser:
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         if token.kind == 'ELSE':
-            # Test 43: ELSE solto / duplo
+            # Else "solto" / duplicado
             raise SyntaxError("[Parser] Unexpected ELSE")
 
         if token.kind == 'OPEN_BRA':
@@ -630,7 +637,10 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # Test 18: EOF imediato após '=' devido a comentário removido
+                # Casos: expressão vazia / '+' / '-' seguidos de EOL/EOF
+                if Parser.lex.next.kind == 'END':
+                    raise SyntaxError("[Parser] Unexpected token EOL")
+
                 saw_eol = False
                 while Parser.lex.next.kind == 'END':
                     saw_eol = True
@@ -639,7 +649,6 @@ class Parser:
                 if Parser.lex.next.kind == 'CLOSE_BRA':
                     raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                 if Parser.lex.next.kind == 'EOF':
-                    # Sem \n → CLOSE_BRA; Com \n → EOL
                     if not saw_eol:
                         raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                     raise SyntaxError("[Parser] Unexpected token EOL")
@@ -688,9 +697,9 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            # Test 50: quebra de linha entre condição e '{'
+            # Se houver quebra de linha entre condição e '{' → Missing OPEN_BRA (Test 38)
             if Parser.lex.next.kind == 'END':
-                raise SyntaxError("[Parser] Unexpected token INT")
+                raise SyntaxError("[Parser] Missing OPEN_BRA")
 
             if Parser.lex.next.kind != 'OPEN_BRA':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
@@ -700,10 +709,14 @@ class Parser:
             Parser.strict_block_after_control = False
             Parser.strict_context = None
 
+            # Proibir newline antes do else (Test 52)
+            if Parser.lex.next.kind == 'END':
+                raise SyntaxError("[Parser] Unexpected token NEWLINE Before Else")
+
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
                 if Parser.lex.next.kind != 'OPEN_BRA':
-                    # Test 40 (mantido)
+                    # (mantém regra do Test 40)
                     raise SyntaxError("[Parser] Unexpected token EOF")
                 Parser.strict_block_after_control = True
                 Parser.strict_context = 'IF'
@@ -764,7 +777,7 @@ class Parser:
         statements = []
         while Parser.lex.next.kind == 'END':
             Parser.lex.select_next()
-        # Para Test 32: deixar '}' pro run() detectar "(expected EOF)"
+        # Deixar '}' para o run() acusar "(expected EOF)"
         while Parser.lex.next.kind not in ('EOF', 'CLOSE_BRA'):
             stmt = Parser.parse_statement()
             if stmt is not None:

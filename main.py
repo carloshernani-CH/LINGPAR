@@ -27,7 +27,6 @@ class Token:
 
 
 class Lexer:
-    # Palavras reservadas aceitas.
     RESERVED = {
         "PRINT", "PRINTLN", "if", "else", "while", "for", "read", "Scanln",
         "var", "true", "false", "int", "bool", "string"
@@ -203,34 +202,34 @@ class SymbolTable:
 
     def get(self, name: str) -> Variable:
         if name not in self._table:
-            raise NameError(f"[SymbolTable] Variable '{name}' not defined")
+            raise NameError(f"[Semantic] Variable '{name}' not defined")
         return self._table[name]
 
     def create_variable(self, name: str, vtype: str):
         if name.upper() in {"PRINT", "PRINTLN"} or name in {"if", "else", "while", "for", "read", "Scanln", "var"}:
-            raise SyntaxError(f"[SymbolTable] '{name}' is a reserved word and cannot be used as a variable name")
+            raise SyntaxError(f"[Parser] '{name}' is a reserved word and cannot be used as a variable name")
         if name in self._table:
-            raise NameError(f"[SymbolTable] Variable '{name}' already declared")
+            raise NameError(f"[Semantic] Variable '{name}' already declared")
         if vtype not in ("int", "bool", "string"):
-            raise TypeError(f"[SymbolTable] Unknown type '{vtype}'")
+            raise TypeError(f"[Semantic] Unknown type '{vtype}'")
         self._table[name] = Variable(None, vtype)
 
     def set(self, name: str, value):
         if name not in self._table:
-            raise NameError(f"[SymbolTable] Variable '{name}' not declared")
+            raise NameError(f"[Semantic] Variable '{name}' not declared")
         var = self._table[name]
         # Checagem de tipos
         if var.type == "int":
-            if not isinstance(value, int):
-                raise TypeError(f"[SymbolTable] Expected int for '{name}', got {type(value).__name__}")
+            if not isinstance(value, int) or isinstance(value, BoolInt):
+                raise TypeError(f"[Semantic] Expected int for '{name}', got bool")
         elif var.type == "bool":
-            if not (isinstance(value, int) and value in (0, 1)):
-                raise TypeError(f"[SymbolTable] Expected bool (0/1) for '{name}', got {value!r}")
+            if not isinstance(value, BoolInt):
+                raise TypeError(f"[Semantic] Expected bool for '{name}'")
         elif var.type == "string":
             if not isinstance(value, str):
-                raise TypeError(f"[SymbolTable] Expected string for '{name}', got {type(value).__name__}")
+                raise TypeError(f"[Semantic] Expected string for '{name}', got {type(value).__name__}")
         else:
-            raise TypeError(f"[SymbolTable] Unsupported variable type '{var.type}'")
+            raise TypeError(f"[Semantic] Unsupported variable type '{var.type}'")
         var.value = value
 
 
@@ -246,6 +245,10 @@ class Node:
     def evaluate(self, st: SymbolTable):
         raise NotImplementedError()
 
+# Subclasse para booleano (mantém compatibilidade com int, mas carrega a "tag" bool)
+class BoolInt(int):
+    pass
+
 
 class IntVal(Node):
     def evaluate(self, st: SymbolTable):
@@ -259,8 +262,7 @@ class StringVal(Node):
 
 class BoolVal(Node):
     def evaluate(self, st: SymbolTable):
-        # Representamos bool como 0/1
-        return 1 if self.value else 0
+        return BoolInt(1 if self.value else 0)
 
 
 class Identifier(Node):
@@ -276,7 +278,7 @@ class Read(Node):
             line = "0"
         line = line.strip()
         if not re.fullmatch(r"-?\d+", line or "0"):
-            raise ValueError("[Read] Expected integer input")
+            raise ValueError("[Semantic] read() expected integer input")
         return int(line)
 
 
@@ -284,19 +286,23 @@ class UnOp(Node):
     def evaluate(self, st: SymbolTable):
         v = self.children[0].evaluate(st)
         if self.value == '+':
-            if not isinstance(v, int):
-                raise TypeError("[UnOp] Unary '+' expects int")
+            if not isinstance(v, int) or isinstance(v, BoolInt):
+                raise TypeError("[Semantic] Unary '+' expects int")
             return +v
         elif self.value == '-':
-            if not isinstance(v, int):
-                raise TypeError("[UnOp] Unary '-' expects int")
+            if not isinstance(v, int) or isinstance(v, BoolInt):
+                raise TypeError("[Semantic] Unary '-' expects int")
             return -v
         elif self.value == '!':
-            if v not in (0, 1):
-                raise TypeError("[UnOp] '!' expects bool")
-            return 0 if v else 1
+            if not isinstance(v, BoolInt):
+                raise TypeError("[Semantic] '!' expects bool")
+            return BoolInt(0 if v else 1)
         else:
-            raise ValueError(f"[UnOp] Unknown unary operator {self.value}")
+            raise ValueError(f"[Parser] Unknown unary operator {self.value}")
+
+
+def _bool_to_str(v: BoolInt) -> str:
+    return "true" if v == 1 else "false"
 
 
 class BinOp(Node):
@@ -305,59 +311,76 @@ class BinOp(Node):
         right = self.children[1].evaluate(st)
         op = self.value
 
-        if op in ('+', '-', '*', '/'):
-            # Aritmética: apenas int,int.
-            # Exceção: '+' concatena string+string.
+        # Concatenação string + (string|int|bool) e (string|int|bool) + string
+        if op == '+':
             if isinstance(left, str) or isinstance(right, str):
-                if op == '+' and isinstance(left, str) and isinstance(right, str):
-                    return left + right
-                raise TypeError(f"[BinOp] '{op}' not supported for strings (only '+' for string+string)")
-            if not (isinstance(left, int) and isinstance(right, int)):
-                raise TypeError(f"[BinOp] Arithmetic '{op}' requires int,int")
-            if op == '+':
+                lstr = left
+                rstr = right
+                if isinstance(left, BoolInt):
+                    lstr = _bool_to_str(left)
+                if isinstance(right, BoolInt):
+                    rstr = _bool_to_str(right)
+                if isinstance(left, int) and not isinstance(left, BoolInt):
+                    lstr = str(left)
+                if isinstance(right, int) and not isinstance(right, BoolInt):
+                    rstr = str(right)
+                if isinstance(lstr, str) and isinstance(rstr, str):
+                    return lstr + rstr
+                raise TypeError("[Semantic] '+' with strings only allows concatenation with int/bool/string")
+            # Aritmética int + int
+            if (isinstance(left, int) and not isinstance(left, BoolInt)) and (isinstance(right, int) and not isinstance(right, BoolInt)):
                 return left + right
-            if op == '-':
-                return left - right
-            if op == '*':
-                return left * right
-            if op == '/':
-                if right == 0:
-                    raise ZeroDivisionError("Division by zero")
-                return left // right
+            raise TypeError("[Semantic] '+' requires int+int or string concatenation")
+
+        if op in ('-', '*', '/'):
+            # Aritmética: apenas int,int (não bool)
+            if isinstance(left, int) and not isinstance(left, BoolInt) and isinstance(right, int) and not isinstance(right, BoolInt):
+                if op == '-':
+                    return left - right
+                if op == '*':
+                    return left * right
+                if op == '/':
+                    if right == 0:
+                        raise ZeroDivisionError("[Semantic] Division by zero")
+                    return left // right
+            raise TypeError(f"[Semantic] Arithmetic '{op}' requires int,int")
 
         if op in ('==', '>', '<'):
-            # Comparação: tipos iguais (int com int, string com string)
+            # Comparações: tipos iguais (int com int, string com string, bool com bool)
+            # BoolInt é seu próprio tipo lógico
+            if isinstance(left, BoolInt) != isinstance(right, BoolInt):
+                raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
+            if isinstance(left, BoolInt) and isinstance(right, BoolInt):
+                if op == '==':
+                    return BoolInt(1 if int(left) == int(right) else 0)
+                # > e < não são permitidos para bool
+                raise TypeError(f"[Semantic] '{op}' not supported for bool")
             if type(left) != type(right):
-                # Observação: em Python bool é subclass de int; aqui exigimos tipos idênticos.
-                raise TypeError(f"[BinOp] Comparison '{op}' requires operands of the same type")
+                raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
             if op == '==':
-                return 1 if left == right else 0
-            # Para > e <: permitimos para int e string; não para bool
-            if isinstance(left, int) and left in (0, 1) and isinstance(right, int) and right in (0, 1):
-                raise TypeError(f"[BinOp] '{op}' not supported for bool")
+                return BoolInt(1 if left == right else 0)
             if not (isinstance(left, int) or isinstance(left, str)):
-                raise TypeError(f"[BinOp] '{op}' not supported for type {type(left).__name__}")
+                raise TypeError(f"[Semantic] '{op}' not supported for type {type(left).__name__}")
             if op == '>':
-                return 1 if left > right else 0
+                return BoolInt(1 if left > right else 0)
             if op == '<':
-                return 1 if left < right else 0
+                return BoolInt(1 if left < right else 0)
 
         if op in ('&&', '||'):
-            # Lógico: espera 0/1
-            if left not in (0, 1) or right not in (0, 1):
-                raise TypeError(f"[BinOp] Logical '{op}' requires bool operands")
+            if not isinstance(left, BoolInt) or not isinstance(right, BoolInt):
+                raise TypeError(f"[Semantic] Logical '{op}' requires bool operands")
             if op == '&&':
-                return 1 if (left == 1 and right == 1) else 0
+                return BoolInt(1 if (left == 1 and right == 1) else 0)
             if op == '||':
-                return 1 if (left == 1 or right == 1) else 0
+                return BoolInt(1 if (left == 1 or right == 1) else 0)
 
-        raise ValueError(f"[BinOp] Unknown operator {op}")
+        raise ValueError(f"[Parser] Unknown operator {op}")
 
 
 class Assignment(Node):
     def evaluate(self, st: SymbolTable):
         if not isinstance(self.children[0], Identifier):
-            raise SyntaxError("[Assignment] Left-hand side must be an Identifier")
+            raise SyntaxError("[Parser] Left-hand side must be an Identifier")
         name = self.children[0].value
         val = self.children[1].evaluate(st)
         st.set(name, val)
@@ -367,7 +390,10 @@ class Assignment(Node):
 class Print(Node):
     def evaluate(self, st: SymbolTable):
         val = self.children[0].evaluate(st)
-        print(val)
+        if isinstance(val, BoolInt):
+            print(_bool_to_str(val))
+        else:
+            print(val)
         return None
 
 
@@ -382,9 +408,9 @@ class If(Node):
     # children: [cond, then_block, else_block?]
     def evaluate(self, st: SymbolTable):
         cond = self.children[0].evaluate(st)
-        if cond not in (0, 1):
-            raise TypeError("[If] Condition must be bool")
-        if cond != 0:
+        if not isinstance(cond, BoolInt):
+            raise TypeError("[Semantic] If condition must be bool")
+        if cond == 1:
             return self.children[1].evaluate(st)
         elif len(self.children) == 3:
             return self.children[2].evaluate(st)
@@ -396,8 +422,8 @@ class While(Node):
     def evaluate(self, st: SymbolTable):
         while True:
             cond = self.children[0].evaluate(st)
-            if cond not in (0, 1):
-                raise TypeError("[While] Condition must be bool")
+            if not isinstance(cond, BoolInt):
+                raise TypeError("[Semantic] While condition must be bool")
             if cond == 0:
                 break
             self.children[1].evaluate(st)
@@ -410,7 +436,7 @@ class VarDec(Node):
     def evaluate(self, st: SymbolTable):
         vtype = self.value
         if not isinstance(self.children[0], Identifier):
-            raise SyntaxError("[VarDec] First child must be Identifier")
+            raise SyntaxError("[Parser] First child must be Identifier")
         name = self.children[0].value
         st.create_variable(name, vtype)
         if len(self.children) == 2:
@@ -578,18 +604,22 @@ class Parser:
         if token.kind == 'OPEN_BRA':
             return Parser.parse_block()
 
-        # --- var declaration: var ID : TYPE [= expr] [END]
+        # --- var declaration:
+        # aceita:  var IDEN ":" TYPE [= expr]
+        #      ou: var IDEN TYPE [= expr]
         if token.kind == 'VAR':
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'IDEN':
                 raise SyntaxError("[Parser] Expected identifier after 'var'")
             ident_name = Parser.lex.next.value
             Parser.lex.select_next()
-            if Parser.lex.next.kind != 'COLON':
-                raise SyntaxError("[Parser] Expected ':' after identifier in var declaration")
-            Parser.lex.select_next()
+
+            # opcional ':'
+            if Parser.lex.next.kind == 'COLON':
+                Parser.lex.select_next()
+
             if Parser.lex.next.kind != 'TYPE':
-                raise SyntaxError("[Parser] Expected a TYPE after ':'")
+                raise SyntaxError("[Parser] Expected a TYPE after variable name")
             vtype = Parser.lex.next.value
             Parser.lex.select_next()
 
@@ -619,26 +649,15 @@ class Parser:
 
         if token.kind == 'IF':
             Parser.lex.select_next()
-            cond = None
-            if Parser.lex.next.kind == 'OPEN_PAR':
-                Parser.lex.select_next()
-                cond = Parser.parse_bool_expression()
-                if Parser.lex.next.kind != 'CLOSE_PAR':
-                    raise SyntaxError("[Parser] Expected ')' after if condition")
-                Parser.lex.select_next()
-                # permite continuar após ')':  ) || expr
-                while Parser.lex.next.kind in ('AND', 'OR'):
-                    op = '&&' if Parser.lex.next.kind == 'AND' else '||'
-                    Parser.lex.select_next()
-                    right = Parser.parse_bool_term()
-                    cond = BinOp(op, [cond, right])
-            else:
-                cond = Parser.parse_bool_expression()
+            if Parser.lex.next.kind != 'OPEN_PAR':
+                raise SyntaxError("[Parser] Expected '(' after if")
+            Parser.lex.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lex.next.kind != 'CLOSE_PAR':
+                raise SyntaxError("[Parser] Expected ')' after if condition")
+            Parser.lex.select_next()
 
-            # proíbe quebra de linha antes do then-statement (compatível com seu strict)
-            if Parser.lex.next.kind == 'END':
-                raise SyntaxError("[Parser] Unexpected token NEWLINE")
-            # se vier bloco, aplicar regras estritas
+            # após if(cond) vem Block obrigatório (compat com seu modelo)
             if Parser.lex.next.kind == 'OPEN_BRA':
                 Parser.strict_block_after_control = True
                 then_stmt = Parser.parse_block()
@@ -648,8 +667,6 @@ class Parser:
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
-                if Parser.lex.next.kind == 'END':
-                    raise SyntaxError("[Parser] Unexpected token NEWLINE")
                 if Parser.lex.next.kind == 'OPEN_BRA':
                     Parser.strict_block_after_control = True
                     else_stmt = Parser.parse_block()
@@ -657,27 +674,22 @@ class Parser:
                 else:
                     else_stmt = Parser.parse_statement()
                 return If(children=[cond, then_stmt, else_stmt])
+
             return If(children=[cond, then_stmt])
 
         if token.kind == 'WHILE':
             Parser.lex.select_next()
-            cond = None
+            # Aceita while(cond) ou for cond (pois 'for' vira WHILE)
             if Parser.lex.next.kind == 'OPEN_PAR':
                 Parser.lex.select_next()
                 cond = Parser.parse_bool_expression()
                 if Parser.lex.next.kind != 'CLOSE_PAR':
                     raise SyntaxError("[Parser] Expected ')' after while condition")
                 Parser.lex.select_next()
-                while Parser.lex.next.kind in ('AND', 'OR'):
-                    op = '&&' if Parser.lex.next.kind == 'AND' else '||'
-                    Parser.lex.select_next()
-                    right = Parser.parse_bool_term()
-                    cond = BinOp(op, [cond, right])
             else:
+                # estilo: while cond { ... }  (ou for cond { ... })
                 cond = Parser.parse_bool_expression()
 
-            if Parser.lex.next.kind == 'END':
-                raise SyntaxError("[Parser] Unexpected token NEWLINE")
             if Parser.lex.next.kind == 'OPEN_BRA':
                 Parser.strict_block_after_control = True
                 body = Parser.parse_block()
@@ -739,13 +751,21 @@ def main():
         with open(filename, "r", encoding="utf-8") as f:
             raw_code = f.read()
     except FileNotFoundError:
-        print(f"Erro: arquivo '{filename}' não encontrado.")
+        print(f"[Lexer] File '{filename}' not found.")
         sys.exit(1)
 
-    code = PrePro.filter(raw_code)
-    ast_root = Parser.run(code)
-    st = SymbolTable()
-    ast_root.evaluate(st)
+    try:
+        code = PrePro.filter(raw_code)
+        ast_root = Parser.run(code)
+        st = SymbolTable()
+        ast_root.evaluate(st)
+    except Exception as e:
+        # Imprime somente a mensagem padronizada, sem traceback
+        msg = str(e)
+        if not (msg.startswith("[Lexer]") or msg.startswith("[Parser]") or msg.startswith("[Semantic]")):
+            msg = "[Semantic] " + msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

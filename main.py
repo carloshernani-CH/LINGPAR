@@ -411,7 +411,7 @@ class VarDec(Node):
             raise SyntaxError("[Parser] First child must be Identifier")
         name = self.children[0].value
 
-        # Se TYPE faltou, erro SEMÂNTICO
+        # TYPE faltou -> erro semântico
         if vtype == "__MISSING_TYPE__":
             raise TypeError("[Semantic] Expected a TYPE after variable name")
 
@@ -633,11 +633,11 @@ class Parser:
             if Parser.lex.next.kind == 'COLON':
                 Parser.lex.select_next()
 
-            # Decisão pós-nome:
-            # - TYPE => ok
-            # - ASSIGN/END/EOF/CLOSE_BRA => TYPE faltou (erro semântico no evaluate)
-            # - IDEN => erro de parser (identificador inesperado, ex: i32)
-            # - outro token => erro de parser "Expected a TYPE..."
+            # Decisão após o nome:
+            # TYPE => ok
+            # ASSIGN/END/EOF/CLOSE_BRA => TYPE faltou (semântico)
+            # IDEN => identificador inesperado (ex: i32) -> Parser
+            # outro => Expected TYPE (Parser)
             if Parser.lex.next.kind == 'TYPE':
                 vtype = Parser.lex.next.value
                 Parser.lex.select_next()
@@ -652,7 +652,7 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # Casos: expressão vazia / '+' / '-' seguidos de EOL/EOF
+                # expressão não pode ser vazia
                 if Parser.lex.next.kind == 'END':
                     raise SyntaxError("[Parser] Unexpected token EOL")
 
@@ -715,16 +715,16 @@ class Parser:
             # Exigir '{' imediatamente após a condição
             if Parser.lex.next.kind == 'END':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
-
             if Parser.lex.next.kind != 'OPEN_BRA':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
+
             Parser.strict_block_after_control = True
             Parser.strict_context = 'IF'
             then_stmt = Parser.parse_block()
             Parser.strict_block_after_control = False
             Parser.strict_context = None
 
-            # NÃO permitir newline antes do else (cumpre Test 52)
+            # **Test 52**: NÃO permitir newline entre '}' e 'else'
             if Parser.lex.next.kind == 'END':
                 raise SyntaxError("[Parser] Unexpected token NEWLINE Before Else")
 

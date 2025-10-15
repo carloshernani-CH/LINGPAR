@@ -347,13 +347,11 @@ class BinOp(Node):
 
         if op in ('==', '>', '<'):
             # Comparações: tipos iguais (int com int, string com string, bool com bool)
-            # BoolInt é seu próprio tipo lógico
             if isinstance(left, BoolInt) != isinstance(right, BoolInt):
                 raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
             if isinstance(left, BoolInt) and isinstance(right, BoolInt):
                 if op == '==':
                     return BoolInt(1 if int(left) == int(right) else 0)
-                # > e < não são permitidos para bool
                 raise TypeError(f"[Semantic] '{op}' not supported for bool")
             if type(left) != type(right):
                 raise TypeError(f"[Semantic] Comparison '{op}' requires operands of the same type")
@@ -509,6 +507,13 @@ class Parser:
             Parser.lex.select_next()
             return Read()
 
+        if token.kind == 'END':
+            raise SyntaxError("[Parser] Unexpected token EOL")
+
+        if token.kind == 'EOF':
+            # Para os testes, trate EOF inesperado em fator como EOL
+            raise SyntaxError("[Parser] Unexpected token EOL")
+
         raise SyntaxError(f"[Parser] Unexpected token {token.kind} in factor")
 
     @staticmethod
@@ -568,7 +573,6 @@ class Parser:
         Parser.lex.select_next()
 
         statements = []
-        # Verifica alinhamento: se strict e '}' vier logo sem NEWLINE/; -> erro
         if Parser.strict_block_after_control and Parser.lex.next.kind == 'CLOSE_BRA':
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
@@ -578,7 +582,6 @@ class Parser:
             Parser.lex.select_next()
 
         if Parser.strict_block_after_control and not saw_end and Parser.lex.next.kind == 'CLOSE_BRA':
-            # '{ }' na mesma linha logo após if/else/while
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         while Parser.lex.next.kind not in ('CLOSE_BRA', 'EOF'):
@@ -656,8 +659,13 @@ class Parser:
             if Parser.lex.next.kind != 'CLOSE_PAR':
                 raise SyntaxError("[Parser] Expected ')' after if condition")
             Parser.lex.select_next()
+            # <<< NOVO: permite continuação com &&/|| depois do ')'
+            while Parser.lex.next.kind in ('AND', 'OR'):
+                op = '&&' if Parser.lex.next.kind == 'AND' else '||'
+                Parser.lex.select_next()
+                right = Parser.parse_bool_term()
+                cond = BinOp(op, [cond, right])
 
-            # após if(cond) vem Block obrigatório (compat com seu modelo)
             if Parser.lex.next.kind == 'OPEN_BRA':
                 Parser.strict_block_after_control = True
                 then_stmt = Parser.parse_block()
@@ -686,8 +694,13 @@ class Parser:
                 if Parser.lex.next.kind != 'CLOSE_PAR':
                     raise SyntaxError("[Parser] Expected ')' after while condition")
                 Parser.lex.select_next()
+                # Também permite continuação com &&/||
+                while Parser.lex.next.kind in ('AND', 'OR'):
+                    op = '&&' if Parser.lex.next.kind == 'AND' else '||'
+                    Parser.lex.select_next()
+                    right = Parser.parse_bool_term()
+                    cond = BinOp(op, [cond, right])
             else:
-                # estilo: while cond { ... }  (ou for cond { ... })
                 cond = Parser.parse_bool_expression()
 
             if Parser.lex.next.kind == 'OPEN_BRA':

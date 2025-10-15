@@ -61,8 +61,7 @@ class Lexer:
         while True:
             c = self._peek()
             if c is None or c == '\n':
-                # mensagem pedida pelo tester para string não terminada
-                raise SyntaxError("[Lexer] Invalid token \"")
+                raise SyntaxError("[Lexer] Invalid token \"")  # string não terminada
             if c == '"':
                 s = self.source[start:self.position]
                 self._advance()  # fecha aspas
@@ -203,7 +202,7 @@ class SymbolTable:
 
     def get(self, name: str) -> Variable:
         if name not in self._table:
-            # padroniza mensagem pedida no Test 30
+            # padroniza como no Test 30
             raise NameError(f"[Semantic] Identifier not found")
         return self._table[name]
 
@@ -458,6 +457,7 @@ class NoOp(Node):
 class Parser:
     lex: Lexer = None
     strict_block_after_control: bool = False
+    block_depth: int = 0  # >>> contador de blocos abertos
 
     # ---------- Factors / Terms / Expressions ----------
     @staticmethod
@@ -571,10 +571,12 @@ class Parser:
     def parse_block() -> Node:
         if Parser.lex.next.kind != 'OPEN_BRA':
             raise SyntaxError("[Parser] Expected '{' to start block")
+        Parser.block_depth += 1
         Parser.lex.select_next()
 
         statements = []
         if Parser.strict_block_after_control and Parser.lex.next.kind == 'CLOSE_BRA':
+            Parser.block_depth -= 1
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         saw_end = False
@@ -583,6 +585,7 @@ class Parser:
             Parser.lex.select_next()
 
         if Parser.strict_block_after_control and not saw_end and Parser.lex.next.kind == 'CLOSE_BRA':
+            Parser.block_depth -= 1
             raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
 
         while Parser.lex.next.kind not in ('CLOSE_BRA', 'EOF'):
@@ -592,9 +595,16 @@ class Parser:
             while Parser.lex.next.kind == 'END':
                 Parser.lex.select_next()
 
-        if Parser.lex.next.kind != 'CLOSE_BRA':
-            raise SyntaxError("[Parser] Expected '}' to end block")
+        if Parser.lex.next.kind == 'EOF':
+            # fim inesperado de arquivo dentro de bloco
+            Parser.block_depth -= 1
+            if Parser.strict_block_after_control:
+                raise SyntaxError("[Parser] Missing CLOSE_BRA")
+            raise SyntaxError("[Parser] Unexpected token EOF (expected CLOSE_BRA)")
+
+        # fecha bloco normalmente
         Parser.lex.select_next()
+        Parser.block_depth -= 1
         return Block(children=statements)
 
     @staticmethod
@@ -612,7 +622,8 @@ class Parser:
         if token.kind == 'VAR':
             Parser.lex.select_next()
             if Parser.lex.next.kind != 'IDEN':
-                raise SyntaxError("[Parser] Expected identifier after 'var'")
+                # Test 33: mensagem pedida
+                raise SyntaxError("[Parser] Unexpected token IDEN")
             ident_name = Parser.lex.next.value
             Parser.lex.select_next()
 
@@ -628,7 +639,7 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # >>> Ajuste Test 18: pule EOLs antes de decidir erro
+                # >>> Ajuste Test 18 com contexto de bloco
                 saw_eol = False
                 while Parser.lex.next.kind == 'END':
                     saw_eol = True
@@ -636,7 +647,9 @@ class Parser:
 
                 if Parser.lex.next.kind == 'CLOSE_BRA':
                     raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
-                if Parser.lex.next.kind in ('EOF',) or saw_eol and Parser.lex.next.kind in ('EOF',):
+                if Parser.lex.next.kind == 'EOF':
+                    if Parser.block_depth > 0 and saw_eol:
+                        raise SyntaxError("[Parser] Unexpected token CLOSE_BRA")
                     raise SyntaxError("[Parser] Unexpected token EOL")
 
                 expr = Parser.parse_bool_expression()
@@ -660,10 +673,11 @@ class Parser:
             Parser.lex.select_next()
             expr = Parser.parse_bool_expression()
             # Test 28: EOL ao invés de ')'
-            if Parser.lex.next.kind == 'END' or Parser.lex.next.kind == 'EOF':
+            if Parser.lex.next.kind in ('END', 'EOF'):
                 raise SyntaxError("[Parser] Unexpected token EOL (expected CLOSE_PAR)")
             if Parser.lex.next.kind != 'CLOSE_PAR':
-                raise SyntaxError("[Parser] Missing CLOSE_PAR")
+                # Ex.: Println(1x)
+                raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}")
             Parser.lex.select_next()
             if Parser.lex.next.kind == 'END':
                 Parser.lex.select_next()
@@ -769,6 +783,8 @@ class Parser:
         Parser.lex.select_next()
         program = Parser.parse_program()
         if Parser.lex.next.kind != 'EOF':
+            if Parser.lex.next.kind == 'CLOSE_BRA':
+                raise SyntaxError("[Parser] Unexpected token CLOSE_BRA (expected EOF)")
             raise SyntaxError(f"[Parser] Unexpected token {Parser.lex.next.kind}")
         return program
 

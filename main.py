@@ -633,11 +633,8 @@ class Parser:
             if Parser.lex.next.kind == 'COLON':
                 Parser.lex.select_next()
 
-            # Decisão após o nome:
-            # TYPE => ok
-            # ASSIGN/END/EOF/CLOSE_BRA => TYPE faltou (semântico)
+            # TYPE => ok | ASSIGN/END/EOF/CLOSE_BRA => TYPE faltou (semântico)
             # IDEN => identificador inesperado (ex: i32) -> Parser
-            # outro => Expected TYPE (Parser)
             if Parser.lex.next.kind == 'TYPE':
                 vtype = Parser.lex.next.value
                 Parser.lex.select_next()
@@ -652,7 +649,6 @@ class Parser:
             if Parser.lex.next.kind == 'ASSIGN':
                 Parser.lex.select_next()
 
-                # expressão não pode ser vazia
                 if Parser.lex.next.kind == 'END':
                     raise SyntaxError("[Parser] Unexpected token EOL")
 
@@ -715,22 +711,23 @@ class Parser:
             # Exigir '{' imediatamente após a condição
             if Parser.lex.next.kind == 'END':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
+
             if Parser.lex.next.kind != 'OPEN_BRA':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
-
             Parser.strict_block_after_control = True
             Parser.strict_context = 'IF'
             then_stmt = Parser.parse_block()
             Parser.strict_block_after_control = False
             Parser.strict_context = None
 
-            # **Test 52**: NÃO permitir newline entre '}' e 'else'
-            if Parser.lex.next.kind == 'END':
-                raise SyntaxError("[Parser] Unexpected token NEWLINE Before Else")
+            # >>> Permitir newline(s) antes do else (Test 1)
+            while Parser.lex.next.kind == 'END':
+                Parser.lex.select_next()
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
                 if Parser.lex.next.kind != 'OPEN_BRA':
+                    # Mensagem consistente
                     raise SyntaxError("[Parser] Missing OPEN_BRA")
                 Parser.strict_block_after_control = True
                 Parser.strict_context = 'IF'

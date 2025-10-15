@@ -410,6 +410,11 @@ class VarDec(Node):
         if not isinstance(self.children[0], Identifier):
             raise SyntaxError("[Parser] First child must be Identifier")
         name = self.children[0].value
+
+        # Correção: se TYPE faltou, erro SEMÂNTICO
+        if vtype == "__MISSING_TYPE__":
+            raise TypeError("[Semantic] Expected a TYPE after variable name")
+
         st.create_variable(name, vtype)
         if len(self.children) == 2:
             init_val = self.children[1].evaluate(st)
@@ -628,10 +633,13 @@ class Parser:
             if Parser.lex.next.kind == 'COLON':
                 Parser.lex.select_next()
 
-            if Parser.lex.next.kind != 'TYPE':
-                raise SyntaxError("[Parser] Expected a TYPE after variable name")
-            vtype = Parser.lex.next.value
-            Parser.lex.select_next()
+            # >>> Correção: TYPE opcional — se não vier, marca como faltante
+            vtype = None
+            if Parser.lex.next.kind == 'TYPE':
+                vtype = Parser.lex.next.value
+                Parser.lex.select_next()
+            else:
+                vtype = "__MISSING_TYPE__"
 
             children = [Identifier(ident_name)]
             if Parser.lex.next.kind == 'ASSIGN':
@@ -697,7 +705,7 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            # Se houver quebra de linha entre condição e '{' → Missing OPEN_BRA (Test 38)
+            # Exigir '{' imediatamente após a condição
             if Parser.lex.next.kind == 'END':
                 raise SyntaxError("[Parser] Missing OPEN_BRA")
 
@@ -709,15 +717,15 @@ class Parser:
             Parser.strict_block_after_control = False
             Parser.strict_context = None
 
-            # Proibir newline antes do else (Test 52)
-            if Parser.lex.next.kind == 'END':
-                raise SyntaxError("[Parser] Unexpected token NEWLINE Before Else")
+            # >>> Correção: permitir newline(s) antes do else
+            while Parser.lex.next.kind == 'END':
+                Parser.lex.select_next()
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
                 if Parser.lex.next.kind != 'OPEN_BRA':
-                    # (mantém regra do Test 40)
-                    raise SyntaxError("[Parser] Unexpected token EOF")
+                    # mensagem mais consistente
+                    raise SyntaxError("[Parser] Missing OPEN_BRA")
                 Parser.strict_block_after_control = True
                 Parser.strict_context = 'IF'
                 else_stmt = Parser.parse_block()

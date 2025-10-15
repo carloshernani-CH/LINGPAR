@@ -411,7 +411,7 @@ class VarDec(Node):
             raise SyntaxError("[Parser] First child must be Identifier")
         name = self.children[0].value
 
-        # Correção: se TYPE faltou, erro SEMÂNTICO
+        # Se TYPE faltou, erro SEMÂNTICO
         if vtype == "__MISSING_TYPE__":
             raise TypeError("[Semantic] Expected a TYPE after variable name")
 
@@ -633,13 +633,20 @@ class Parser:
             if Parser.lex.next.kind == 'COLON':
                 Parser.lex.select_next()
 
-            # >>> Correção: TYPE opcional — se não vier, marca como faltante
-            vtype = None
+            # Decisão pós-nome:
+            # - TYPE => ok
+            # - ASSIGN/END/EOF/CLOSE_BRA => TYPE faltou (erro semântico no evaluate)
+            # - IDEN => erro de parser (identificador inesperado, ex: i32)
+            # - outro token => erro de parser "Expected a TYPE..."
             if Parser.lex.next.kind == 'TYPE':
                 vtype = Parser.lex.next.value
                 Parser.lex.select_next()
-            else:
+            elif Parser.lex.next.kind in ('ASSIGN', 'END', 'EOF', 'CLOSE_BRA'):
                 vtype = "__MISSING_TYPE__"
+            elif Parser.lex.next.kind == 'IDEN':
+                raise SyntaxError("[Parser] Unexpected Identifier")
+            else:
+                raise SyntaxError("[Parser] Expected a TYPE after variable name")
 
             children = [Identifier(ident_name)]
             if Parser.lex.next.kind == 'ASSIGN':
@@ -717,14 +724,13 @@ class Parser:
             Parser.strict_block_after_control = False
             Parser.strict_context = None
 
-            # >>> Correção: permitir newline(s) antes do else
-            while Parser.lex.next.kind == 'END':
-                Parser.lex.select_next()
+            # NÃO permitir newline antes do else (cumpre Test 52)
+            if Parser.lex.next.kind == 'END':
+                raise SyntaxError("[Parser] Unexpected token NEWLINE Before Else")
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
                 if Parser.lex.next.kind != 'OPEN_BRA':
-                    # mensagem mais consistente
                     raise SyntaxError("[Parser] Missing OPEN_BRA")
                 Parser.strict_block_after_control = True
                 Parser.strict_context = 'IF'

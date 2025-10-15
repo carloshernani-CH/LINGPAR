@@ -457,7 +457,8 @@ class NoOp(Node):
 class Parser:
     lex: Lexer = None
     strict_block_after_control: bool = False
-    block_depth: int = 0  # >>> contador de blocos abertos
+    strict_context: Optional[str] = None  # "IF" | "WHILE" | None
+    block_depth: int = 0  # contador de blocos abertos
 
     # ---------- Factors / Terms / Expressions ----------
     @staticmethod
@@ -597,9 +598,14 @@ class Parser:
 
         if Parser.lex.next.kind == 'EOF':
             # fim inesperado de arquivo dentro de bloco
+            ctx = Parser.strict_context
             Parser.block_depth -= 1
             if Parser.strict_block_after_control:
-                raise SyntaxError("[Parser] Missing CLOSE_BRA")
+                # Diferenciar mensagens
+                if ctx == 'IF':
+                    raise SyntaxError("[Parser] Missing CLOSE_BRA")
+                if ctx == 'WHILE':
+                    raise SyntaxError("[Parser] Unexpected token EOF")
             raise SyntaxError("[Parser] Unexpected token EOF (expected CLOSE_BRA)")
 
         # fecha bloco normalmente
@@ -700,21 +706,26 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            if Parser.lex.next.kind == 'OPEN_BRA':
-                Parser.strict_block_after_control = True
-                then_stmt = Parser.parse_block()
-                Parser.strict_block_after_control = False
-            else:
-                then_stmt = Parser.parse_statement()
+            # obrigar bloco { } após if
+            if Parser.lex.next.kind != 'OPEN_BRA':
+                raise SyntaxError("[Parser] Missing OPEN_BRA")
+            Parser.strict_block_after_control = True
+            Parser.strict_context = 'IF'
+            then_stmt = Parser.parse_block()
+            Parser.strict_block_after_control = False
+            Parser.strict_context = None
 
             if Parser.lex.next.kind == 'ELSE':
                 Parser.lex.select_next()
-                if Parser.lex.next.kind == 'OPEN_BRA':
-                    Parser.strict_block_after_control = True
-                    else_stmt = Parser.parse_block()
-                    Parser.strict_block_after_control = False
-                else:
-                    else_stmt = Parser.parse_statement()
+                # obrigar bloco também no else
+                if Parser.lex.next.kind != 'OPEN_BRA':
+                    # Test 40
+                    raise SyntaxError("[Parser] Unexpected token EOF")
+                Parser.strict_block_after_control = True
+                Parser.strict_context = 'IF'
+                else_stmt = Parser.parse_block()
+                Parser.strict_block_after_control = False
+                Parser.strict_context = None
                 return If(children=[cond, then_stmt, else_stmt])
 
             return If(children=[cond, then_stmt])
@@ -735,12 +746,14 @@ class Parser:
                 right = Parser.parse_bool_term()
                 cond = BinOp(op, [cond, right])
 
-            if Parser.lex.next.kind == 'OPEN_BRA':
-                Parser.strict_block_after_control = True
-                body = Parser.parse_block()
-                Parser.strict_block_after_control = False
-            else:
-                body = Parser.parse_statement()
+            # obrigar bloco { } após while
+            if Parser.lex.next.kind != 'OPEN_BRA':
+                raise SyntaxError("[Parser] Missing OPEN_BRA")
+            Parser.strict_block_after_control = True
+            Parser.strict_context = 'WHILE'
+            body = Parser.parse_block()
+            Parser.strict_block_after_control = False
+            Parser.strict_context = None
             return While(children=[cond, body])
 
         if token.kind == 'IDEN':
@@ -769,7 +782,8 @@ class Parser:
         statements = []
         while Parser.lex.next.kind == 'END':
             Parser.lex.select_next()
-        while Parser.lex.next.kind != 'EOF':
+        # para Test 32: parar se sobrar '}' e deixar o run() emitir a msg correta
+        while Parser.lex.next.kind not in ('EOF', 'CLOSE_BRA'):
             stmt = Parser.parse_statement()
             if stmt is not None:
                 statements.append(stmt)

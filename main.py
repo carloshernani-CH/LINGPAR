@@ -859,6 +859,8 @@ class Parser:
                     args.append(arg)
                     if Parser.lex.next.kind == 'COMMA':
                         Parser.lex.select_next()
+                        if Parser.lex.next.kind == 'CLOSE_PAR':
+                            raise SyntaxError("[Parser] Unexpected token CLOSE_PAR")
                     elif Parser.lex.next.kind != 'CLOSE_PAR':
                         raise SyntaxError("[Parser] Expected ',' or ')' in function call")
                 Parser.lex.select_next()
@@ -1013,7 +1015,9 @@ class Parser:
             if Parser.lex.next.kind == 'TYPE':
                 vtype = Parser.lex.next.value
                 Parser.lex.select_next()
-            elif Parser.lex.next.kind in ('ASSIGN', 'END', 'EOF', 'CLOSE_BRA'):
+            elif Parser.lex.next.kind == 'ASSIGN':
+                raise SyntaxError("[Parser] Expected a TYPE after variable name")
+            elif Parser.lex.next.kind in ('END', 'EOF', 'CLOSE_BRA'):
                 vtype = "__MISSING_TYPE__"
             elif Parser.lex.next.kind == 'IDEN':
                 raise SyntaxError("[Parser] Unexpected Identifier")
@@ -1161,6 +1165,8 @@ class Parser:
                     args.append(arg)
                     if Parser.lex.next.kind == 'COMMA':
                         Parser.lex.select_next()
+                        if Parser.lex.next.kind == 'CLOSE_PAR':
+                            raise SyntaxError("[Parser] Unexpected token CLOSE_PAR")
                     elif Parser.lex.next.kind != 'CLOSE_PAR':
                         raise SyntaxError("[Parser] Expected ',' or ')' in function call")
                 Parser.lex.select_next()
@@ -1210,6 +1216,8 @@ class Parser:
 
             if Parser.lex.next.kind == 'COMMA':
                 Parser.lex.select_next()
+                if Parser.lex.next.kind == 'CLOSE_PAR':
+                    raise SyntaxError("[Parser] Expected parameter name")
             elif Parser.lex.next.kind != 'CLOSE_PAR':
                 raise SyntaxError("[Parser] Expected ',' or ')' in parameter list")
 

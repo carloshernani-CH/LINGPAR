@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Arquivos temporários
+*.tmp
+*.swp
+*.swo
+*~
+
+# Assembly e executáveis
+*.asm
+*.o
+*.out
+*.exe
+teste
+arquivo
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# Arquivos de backup
+*.bak
+*.backup
